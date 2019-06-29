@@ -135,6 +135,7 @@ size_t MemTable::ApproximateMemoryUsage() {
       std::cerr << "arena size: " << arena_.ApproximateMemoryUsage() << std::endl;
       std::cerr << "table size: " << table_->ApproximateMemoryUsage() << std::endl;
       std::cerr << "arena mem allocated: " << arena_.GetArenaMemoryUsage() << std::endl;
+      std::cerr << "num entries: " << num_entries_.load(std::memory_order_relaxed) << std::endl;
   }
   for (size_t usage : usages) {
     // If usage + total_usage >= kMaxSizet, return kMaxSizet.

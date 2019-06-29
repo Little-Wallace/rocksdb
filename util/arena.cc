@@ -19,6 +19,7 @@
 #include <sys/mman.h>
 #endif
 #include <algorithm>
+#include <iostream>
 #include "port/port.h"
 #include "rocksdb/env.h"
 #include "util/logging.h"
@@ -149,6 +150,10 @@ char* Arena::AllocateFromHugePage(size_t bytes) {
   }
   huge_blocks_.back() = MmapInfo(addr, bytes);
   blocks_memory_ += bytes;
+   if (blocks_memory_ == 16779264) {
+    std::cerr << "abort from Huge Page" << std::endl;
+    abort();
+  }
   if (tracker_ != nullptr) {
     tracker_->Allocate(bytes);
   }
@@ -229,6 +234,10 @@ char* Arena::AllocateNewBlock(size_t block_bytes) {
   allocated_size = block_bytes;
 #endif  // ROCKSDB_MALLOC_USABLE_SIZE
   blocks_memory_ += allocated_size;
+  if (blocks_memory_ == 16779264) {
+    std::cerr << "abort from allocate" << std::endl;
+    abort();
+  }
   if (tracker_ != nullptr) {
     tracker_->Allocate(allocated_size);
   }
