@@ -69,6 +69,13 @@ class ConcurrentArena : public Allocator {
     return arena_.ApproximateMemoryUsage() - ShardAllocatedAndUnused();
   }
 
+  size_t GetArenaMemoryUsage() const {
+      std::unique_lock<SpinMutex> lock(arena_mutex_, std::defer_lock);
+        lock.lock();
+        return arena_.MemoryAllocatedBytes();
+  }
+
+
   size_t MemoryAllocatedBytes() const {
     return memory_allocated_bytes_.load(std::memory_order_relaxed);
   }

@@ -39,6 +39,8 @@
 #include "util/mutexlock.h"
 #include "util/util.h"
 
+#include <iostream>
+
 namespace rocksdb {
 
 ImmutableMemTableOptions::ImmutableMemTableOptions(
@@ -127,7 +129,13 @@ size_t MemTable::ApproximateMemoryUsage() {
                                table_->ApproximateMemoryUsage(),
                                range_del_table_->ApproximateMemoryUsage(),
                                rocksdb::ApproximateMemoryUsage(insert_hints_)};
-  size_t total_usage = 0;
+    size_t total_usage = 0;
+  int idx = random() % 64;
+  if (idx == 0) {
+      std::cerr << "arena size: " << arena_.ApproximateMemoryUsage() << std::endl;
+      std::cerr << "table size: " << table_->ApproximateMemoryUsage() << std::endl;
+      std::cerr << "arena mem allocated: " << arena_.GetArenaMemoryUsage() << std::endl;
+  }
   for (size_t usage : usages) {
     // If usage + total_usage >= kMaxSizet, return kMaxSizet.
     // the following variation is to avoid numeric overflow.

@@ -310,6 +310,8 @@ class MemTable {
 
   void SetCreationSeq(SequenceNumber sn) { creation_seq_ = sn; }
 
+  ConcurrentArena* GetArena() { return &arena_; }
+
   // Returns the next active logfile number when this memtable is about to
   // be flushed to storage
   // REQUIRES: external synchronization to prevent simultaneous
