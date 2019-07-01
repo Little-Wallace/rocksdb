@@ -40,6 +40,9 @@ class Arena : public Allocator {
   // page TLB first. If allocation fails, will fall back to normal case.
   explicit Arena(size_t block_size = kMinBlockSize,
                  AllocTracker* tracker = nullptr, size_t huge_page_size = 0);
+  explicit Arena(Logger* logger, size_t block_size = kMinBlockSize,
+                 AllocTracker* tracker = nullptr, size_t huge_page_size = 0);
+
   ~Arena();
 
   char* Allocate(size_t bytes) override;
@@ -112,11 +115,12 @@ class Arena : public Allocator {
   size_t hugetlb_size_ = 0;
 #endif  // MAP_HUGETLB
   char* AllocateFromHugePage(size_t bytes);
-  char* AllocateFallback(size_t bytes, bool aligned);
-  char* AllocateNewBlock(size_t block_bytes);
+  char* AllocateFallback(size_t bytes, bool aligned, Logger* logger);
+  char* AllocateNewBlock(size_t block_bytes, Logger* logger);
 
   // Bytes of memory in blocks allocated so far
   size_t blocks_memory_ = 0;
+  std::shared_ptr<Logger> logger_;
   AllocTracker* tracker_;
 };
 
@@ -130,7 +134,7 @@ inline char* Arena::Allocate(size_t bytes) {
     alloc_bytes_remaining_ -= bytes;
     return unaligned_alloc_ptr_;
   }
-  return AllocateFallback(bytes, false /* unaligned */);
+  return AllocateFallback(bytes, false /* unaligned */, nullptr);
 }
 
 // check and adjust the block_size so that the return value is

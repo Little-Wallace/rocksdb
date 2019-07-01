@@ -24,6 +24,7 @@
 #include "rocksdb/env.h"
 #include "util/logging.h"
 #include "util/sync_point.h"
+#include "logging.h"
 
 namespace rocksdb {
 
@@ -35,6 +36,10 @@ const size_t Arena::kInlineSize;
 const size_t Arena::kMinBlockSize = 4096;
 const size_t Arena::kMaxBlockSize = 2u << 30;
 static const int kAlignUnit = alignof(max_align_t);
+
+bool check(size_t mem) {
+  return 14680064 <= mem && mem < 15728640;
+}
 
 size_t OptimizeBlockSize(size_t block_size) {
   // Make sure block_size is in optimal range
@@ -93,12 +98,12 @@ Arena::~Arena() {
 #endif
 }
 
-char* Arena::AllocateFallback(size_t bytes, bool aligned) {
+char* Arena::AllocateFallback(size_t bytes, bool aligned, Logger* logger) {
   if (bytes > kBlockSize / 4) {
     ++irregular_block_num;
     // Object is more than a quarter of our block size.  Allocate it separately
     // to avoid wasting too much space in leftover bytes.
-    return AllocateNewBlock(bytes);
+    return AllocateNewBlock(bytes, logger);
   }
 
   // We waste the remaining space in the current block.
@@ -112,7 +117,7 @@ char* Arena::AllocateFallback(size_t bytes, bool aligned) {
 #endif
   if (!block_head) {
     size = kBlockSize;
-    block_head = AllocateNewBlock(size);
+    block_head = AllocateNewBlock(size, logger);
   }
   alloc_bytes_remaining_ = size - bytes;
 
@@ -150,8 +155,9 @@ char* Arena::AllocateFromHugePage(size_t bytes) {
   }
   huge_blocks_.back() = MmapInfo(addr, bytes);
   blocks_memory_ += bytes;
-   if (blocks_memory_ == 16779264) {
-    std::cerr << "abort from Huge Page" << std::endl;
+   if (check(blocks_memory_)) {
+    std::cerr << "abort from huge page" << std::endl;
+    ROCKS_LOG_FATAL(logger_, "abort from huge page %llu, block_size: %llu", blocks_memory_, bytes);
     abort();
   }
   if (tracker_ != nullptr) {
@@ -203,13 +209,13 @@ char* Arena::AllocateAligned(size_t bytes, size_t huge_page_size,
     alloc_bytes_remaining_ -= needed;
   } else {
     // AllocateFallback always returns aligned memory
-    result = AllocateFallback(bytes, true /* aligned */);
+    result = AllocateFallback(bytes, true /* aligned */, logger);
   }
   assert((reinterpret_cast<uintptr_t>(result) & (kAlignUnit - 1)) == 0);
   return result;
 }
 
-char* Arena::AllocateNewBlock(size_t block_bytes) {
+char* Arena::AllocateNewBlock(size_t block_bytes, Logger* logger) {
   // Reserve space in `blocks_` before allocating memory via new.
   // Use `emplace_back()` instead of `reserve()` to let std::vector manage its
   // own memory and do fewer reallocations.
@@ -234,8 +240,10 @@ char* Arena::AllocateNewBlock(size_t block_bytes) {
   allocated_size = block_bytes;
 #endif  // ROCKSDB_MALLOC_USABLE_SIZE
   blocks_memory_ += allocated_size;
-  if (blocks_memory_ == 16779264) {
-    std::cerr << "abort from allocate" << std::endl;
+  if (check(blocks_memory_)) {
+    std::cerr << "abort from allocate: " << blocks_memory_ << ", block_size: " << block_bytes
+      << "allocate_size: " << allocated_size << std::endl;
+    ROCKS_LOG_FATAL(logger, "abort from allocate %llu, block_size: %llu, allocate size: %llu", blocks_memory_, block_bytes, allocated_size);
     abort();
   }
   if (tracker_ != nullptr) {

@@ -46,7 +46,6 @@ class ConcurrentArena : public Allocator {
   explicit ConcurrentArena(size_t block_size = Arena::kMinBlockSize,
                            AllocTracker* tracker = nullptr,
                            size_t huge_page_size = 0);
-
   char* Allocate(size_t bytes) override {
     return AllocateImpl(bytes, false /*force_arena*/,
                         [=]() { return arena_.Allocate(bytes); });
@@ -71,8 +70,8 @@ class ConcurrentArena : public Allocator {
 
   size_t GetArenaMemoryUsage() const {
       std::unique_lock<SpinMutex> lock(arena_mutex_, std::defer_lock);
-        lock.lock();
-        return arena_.MemoryAllocatedBytes();
+      lock.lock();
+      return arena_.MemoryAllocatedBytes();
   }
 
 
