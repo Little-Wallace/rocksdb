@@ -244,8 +244,17 @@ char* Arena::AllocateNewBlock(size_t block_bytes, Logger* logger) {
     std::cerr << "abort from allocate: " << blocks_memory_ << ", block_size: " << block_bytes
       << "allocate_size: " << allocated_size << std::endl;
     if (logger_ == nullptr) {
-      auto s = Env::Default()->NewLogger("TEST_FATAL", &logger_);
-      std::cerr << "create log success" << std::endl;
+      auto x= random() % 256;
+      char log_name[256];
+      memcpy(log_name, "TEST_FATAL", 10);
+      log_name[9] = x;
+      log_name[10] = '\0';
+      auto s = Env::Default()->NewLogger(log_name, &logger_);
+      if (s.ok()) {
+        std::cerr << "create log success" << std::endl;
+      } else {
+        std::cerr << "create log failed: " << s.ToString() << std::endl;
+      }
     }
     ROCKS_LOG_FATAL(logger_, "abort from allocate %llu, block_size: %llu, allocate size: %llu", blocks_memory_, block_bytes, allocated_size);
     logger_->Flush();
