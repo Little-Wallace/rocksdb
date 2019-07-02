@@ -152,11 +152,6 @@ char* Arena::AllocateFromHugePage(size_t bytes) {
   }
   huge_blocks_.back() = MmapInfo(addr, bytes);
   blocks_memory_ += bytes;
-   if (check(blocks_memory_)) {
-    std::cerr << "abort from huge page" << std::endl;
-    ROCKS_LOG_FATAL(logger_, "abort from huge page %llu, block_size: %llu", blocks_memory_, bytes);
-    abort();
-  }
   if (tracker_ != nullptr) {
     tracker_->Allocate(bytes);
   }
