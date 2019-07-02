@@ -41,8 +41,13 @@
 
 #include <iostream>
 
+
+
 namespace rocksdb {
 
+bool check(size_t mem) {
+  return 14680064 <= mem && mem < 15728640;
+}
 ImmutableMemTableOptions::ImmutableMemTableOptions(
     const ImmutableCFOptions& ioptions,
     const MutableCFOptions& mutable_cf_options)
@@ -117,6 +122,8 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
         6 /* hard coded 6 probes */, nullptr, moptions_.memtable_huge_page_size,
         ioptions.info_log));
   }
+  std::cerr << "arena initial size: " << arena_.ApproximateMemoryUsage() << std::endl;
+  std::cerr << "arena initial memory size: " << arena_.GetArenaMemoryUsage() << std::endl;
 }
 
 MemTable::~MemTable() {
@@ -164,6 +171,9 @@ bool MemTable::ShouldFlushNow() const {
   auto allocated_memory = table_->ApproximateMemoryUsage() +
                           range_del_table_->ApproximateMemoryUsage() +
                           arena_.MemoryAllocatedBytes();
+  if (check(allocated_memory)) {
+    std::cerr << "should flush because allocated memory: " << allocated_memory << std::endl;
+  }
 
   // if we can still allocate one more block without exceeding the
   // over-allocation ratio, then we should not flush.

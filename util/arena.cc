@@ -37,9 +37,6 @@ const size_t Arena::kMinBlockSize = 4096;
 const size_t Arena::kMaxBlockSize = 2u << 30;
 static const int kAlignUnit = alignof(max_align_t);
 
-bool check(size_t mem) {
-  return 14680064 <= mem && mem < 15728640;
-}
 
 size_t OptimizeBlockSize(size_t block_size) {
   // Make sure block_size is in optimal range
@@ -240,26 +237,26 @@ char* Arena::AllocateNewBlock(size_t block_bytes, Logger* logger) {
   allocated_size = block_bytes;
 #endif  // ROCKSDB_MALLOC_USABLE_SIZE
   blocks_memory_ += allocated_size;
-  if (check(blocks_memory_)) {
-    std::cerr << "abort from allocate: " << blocks_memory_ << ", block_size: " << block_bytes
-      << "allocate_size: " << allocated_size << std::endl;
-    if (logger_ == nullptr) {
-      auto x= random() % 256;
-      char log_name[256];
-      memcpy(log_name, "TEST_FATAL", 10);
-      log_name[9] = x;
-      log_name[10] = '\0';
-      auto s = Env::Default()->NewLogger(log_name, &logger_);
-      if (s.ok()) {
-        std::cerr << "create log success" << std::endl;
-      } else {
-        std::cerr << "create log failed: " << s.ToString() << std::endl;
-      }
-    }
-    ROCKS_LOG_FATAL(logger_, "abort from allocate %llu, block_size: %llu, allocate size: %llu", blocks_memory_, block_bytes, allocated_size);
-    logger_->Flush();
-    abort();
-  }
+//  if (check(blocks_memory_)) {
+//    std::cerr << "abort from allocate: " << blocks_memory_ << ", block_size: " << block_bytes
+//      << "allocate_size: " << allocated_size << std::endl;
+//    if (logger_ == nullptr) {
+//      auto x= random() % 256;
+//      char log_name[256];
+//      memcpy(log_name, "TEST_FATAL", 10);
+//      log_name[9] = x;
+//      log_name[10] = '\0';
+//      auto s = Env::Default()->NewLogger(log_name, &logger_);
+//      if (s.ok()) {
+//        std::cerr << "create log success" << std::endl;
+//      } else {
+//        std::cerr << "create log failed: " << s.ToString() << std::endl;
+//      }
+//    }
+//    ROCKS_LOG_FATAL(logger_, "abort from allocate %llu, block_size: %llu, allocate size: %llu", blocks_memory_, block_bytes, allocated_size);
+//    logger_->Flush();
+//    abort();
+//  }
   if (tracker_ != nullptr) {
     tracker_->Allocate(allocated_size);
   }
