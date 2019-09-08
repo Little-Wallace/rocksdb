@@ -485,9 +485,9 @@ void WriteThread::EnterAsMemTableWriter(Writer* leader,
   // Allow the group to grow up to a maximum size, but if the
   // original write is small, limit the growth so we do not slow
   // down the small write too much.
-  size_t max_size = 1 << 20;
-  if (size <= (128 << 10)) {
-    max_size = size + (128 << 10);
+  size_t max_size = 8 << 20;
+  if (size <= (2 << 20)) {
+    max_size = size + (2 << 20);
   }
 
   leader->write_group = write_group;
