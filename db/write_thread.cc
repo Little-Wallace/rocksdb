@@ -6,6 +6,7 @@
 #include "db/write_thread.h"
 #include <chrono>
 #include <thread>
+#include <iostream>
 #include "db/column_family.h"
 #include "monitoring/perf_context_imp.h"
 #include "port/port.h"
@@ -22,12 +23,14 @@ WriteThread::WriteThread(const ImmutableDBOptions& db_options)
       allow_concurrent_memtable_write_(
           db_options.allow_concurrent_memtable_write),
       enable_pipelined_write_(db_options.enable_pipelined_write),
+      enable_multi_thread_write_(db_options.enable_multi_thread_write),
       newest_writer_(nullptr),
       newest_memtable_writer_(nullptr),
       last_sequence_(0),
       write_stall_dummy_(),
       stall_mu_(),
-      stall_cv_(&stall_mu_) {}
+      stall_cv_(&stall_mu_),
+      write_pool_(nullptr) {}
 
 uint8_t WriteThread::BlockingAwaitState(Writer* w, uint8_t goal_mask) {
   // We're going to block.  Lazily create the mutex.  We guarantee
@@ -136,6 +139,28 @@ uint8_t WriteThread::AwaitState(Writer* w, uint8_t goal_mask,
   // The samling base for updating the yeild credit. The sampling rate would be
   // 1/sampling_base.
   const int sampling_base = 256;
+
+  if (enable_multi_thread_write_ && write_pool_) {
+    auto spin_begin = std::chrono::steady_clock::now();
+    auto max_yield_usec = max_yield_usec_ * 8;
+    while ((state & goal_mask) == 0) {
+      if (!write_pool_->StealOneJobAndRun()) {
+        std::this_thread::yield();
+      }
+      state = w->state.load(std::memory_order_acquire);
+      if (max_yield_usec > 0) {
+        auto now = std::chrono::steady_clock::now();
+        if ((now - spin_begin) > std::chrono::microseconds(max_yield_usec)) {
+          break;
+        }
+      }
+    }
+    if ((state & goal_mask) == 0) {
+      TEST_SYNC_POINT_CALLBACK("WriteThread::AwaitState:BlockingWaiting", w);
+      state = BlockingAwaitState(w, goal_mask);
+    }
+    return state;
+  }
 
   if (max_yield_usec_ > 0) {
     update_ctx = Random::GetTLSInstance()->OneIn(sampling_base);
@@ -373,6 +398,10 @@ void WriteThread::JoinBatchGroup(Writer* w) {
 
   TEST_SYNC_POINT_CALLBACK("WriteThread::JoinBatchGroup:Wait", w);
 
+  if (enable_multi_thread_write_) {
+    return;
+  }
+
   if (!linked_as_leader) {
     /**
      * Wait util:
@@ -393,6 +422,12 @@ void WriteThread::JoinBatchGroup(Writer* w) {
                &jbg_ctx);
     TEST_SYNC_POINT_CALLBACK("WriteThread::JoinBatchGroup:DoneWaiting", w);
   }
+}
+
+
+void WriteThread::AwaitWriterState(Writer* w) {
+  AwaitState(w, STATE_GROUP_LEADER | STATE_COMPLETED | STATE_MEMTABLE_WRITER_LEADER,
+               &jbg_ctx);
 }
 
 size_t WriteThread::EnterAsBatchGroupLeader(Writer* leader,
@@ -423,6 +458,7 @@ size_t WriteThread::EnterAsBatchGroupLeader(Writer* leader,
   // explicitly wake us up (the list was non-empty when we added ourself,
   // so we have already received our MarkJoined).
   CreateMissingNewerLinks(newest_writer);
+
 
   // Tricky. Iteration start (leader) is exclusive and finish
   // (newest_writer) is inclusive. Iteration goes from old to new.
@@ -469,6 +505,7 @@ size_t WriteThread::EnterAsBatchGroupLeader(Writer* leader,
     write_group->last_writer = w;
     write_group->size++;
   }
+
   TEST_SYNC_POINT_CALLBACK("WriteThread::EnterAsBatchGroupLeader:End", w);
   return size;
 }
@@ -614,7 +651,7 @@ void WriteThread::ExitAsBatchGroupLeader(WriteGroup& write_group,
     status = write_group.status;
   }
 
-  if (enable_pipelined_write_) {
+  if (enable_pipelined_write_ || enable_multi_thread_write_) {
     // Notify writers don't write to memtable to exit.
     for (Writer* w = last_writer; w != leader;) {
       Writer* next = w->link_older;

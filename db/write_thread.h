@@ -22,7 +22,9 @@
 #include "rocksdb/status.h"
 #include "rocksdb/types.h"
 #include "rocksdb/write_batch.h"
+#include "rocksdb/threadpool.h"
 #include "util/autovector.h"
+
 
 namespace rocksdb {
 
@@ -275,6 +277,7 @@ class WriteThread {
   //
   // Writer* w:        Writer to be executed as part of a batch group
   void JoinBatchGroup(Writer* w);
+  void AwaitWriterState(Writer* w);
 
   // Constructs a write batch group led by leader, which should be a
   // Writer passed to JoinBatchGroup on the current thread.
@@ -349,6 +352,14 @@ class WriteThread {
   // Remove the dummy writer and wake up waiting writers
   void EndWriteStall();
 
+  void SetWritePool(const std::shared_ptr<ThreadPool>& pool) {
+    write_pool_ = pool;
+  }
+
+  void ResetWritePool() {
+    write_pool_.reset();
+  }
+
  private:
   // See AwaitState.
   const uint64_t max_yield_usec_;
@@ -359,6 +370,7 @@ class WriteThread {
 
   // Enable pipelined write to WAL and memtable.
   const bool enable_pipelined_write_;
+  const bool enable_multi_thread_write_;
 
   // Points to the newest pending writer. Only leader can remove
   // elements, adding can be done lock-free by anybody.
@@ -382,6 +394,7 @@ class WriteThread {
   // on the writer queue
   port::Mutex stall_mu_;
   port::CondVar stall_cv_;
+  std::shared_ptr<ThreadPool> write_pool_;
 
   // Waits for w->state & goal_mask using w->StateMutex().  Returns
   // the state that satisfies goal_mask.
