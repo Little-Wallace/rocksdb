@@ -446,7 +446,6 @@ Status DBImpl::CloseHelper() {
   error_handler_.CancelErrorRecovery();
   if (write_pool_) {
     write_pool_->WaitForJobsAndJoinAllThreads();
-    write_pool_.reset();
   }
   while (error_handler_.IsRecoveryInProgress()) {
     bg_cv_.Wait();

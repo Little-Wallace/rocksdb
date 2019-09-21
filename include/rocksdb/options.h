@@ -909,7 +909,6 @@ struct DBOptions {
   // Default: false
   bool enable_pipelined_write = false;
 
-<<<<<<< HEAD
   // Setting unordered_write to true trades higher write throughput with
   // relaxing the immutability guarantee of snapshots. This violates the
   // repeatability one expects from ::Get from a snapshot, as well as

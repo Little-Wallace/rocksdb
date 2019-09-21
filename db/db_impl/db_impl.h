@@ -1022,7 +1022,7 @@ class DBImpl : public DB {
                    PreReleaseCallback* pre_release_callback = nullptr);
 
   Status MultiThreadWriteImpl(const WriteOptions& write_options,
-                         const std::vector<WriteBatch*>& my_batch, WriteCallback* callback,
+                         const autovector<WriteBatch*>& my_batch, WriteCallback* callback,
                          uint64_t* log_used = nullptr, uint64_t log_ref = 0,
                          uint64_t* seq_used = nullptr);
 
@@ -1522,7 +1522,6 @@ class DBImpl : public DB {
 
   void WaitForBackgroundWork();
 
-<<<<<<< HEAD:db/db_impl/db_impl.h
   // No copying allowed
   DBImpl(const DBImpl&);
   void operator=(const DBImpl&);
@@ -1580,8 +1579,6 @@ class DBImpl : public DB {
   static Status ValidateOptions(
       const DBOptions& db_options,
       const std::vector<ColumnFamilyDescriptor>& column_families);
-  void LeaderWrite(const WriteOptions &write_options, WriteThread::Writer *writer,
-                   uint64_t *log_used);
 
   // table_cache_ provides its own synchronization
   std::shared_ptr<Cache> table_cache_;
