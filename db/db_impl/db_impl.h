@@ -1058,6 +1058,7 @@ class DBImpl : public DB {
   // Actual implementation of Close()
   Status CloseImpl();
 
+
   // Recover the descriptor from persistent storage.  May do a significant
   // amount of work to recover recently logged updates.  Any changes to
   // be made to the descriptor are added to *edit.
@@ -1905,6 +1906,19 @@ class DBImpl : public DB {
   InstrumentedCondVar atomic_flush_install_cv_;
 
   bool wal_in_db_path_;
+};
+
+class GroupLeaderWriterGuard {
+public:
+    GroupLeaderWriterGuard();
+    GroupLeaderWriterGuard(WriteThread* write_thread, InstrumentedMutex* mu);
+    ~GroupLeaderWriterGuard();
+private:
+    static WriteThread::Writer* GetLocalWriter();
+
+    WriteThread* write_thread_;
+    WriteThread::Writer* writer_;
+    bool leader_;
 };
 
 extern Options SanitizeOptions(const std::string& db, const Options& src);
