@@ -3618,49 +3618,6 @@ Status DBImpl::GetLatestSequenceForKey(SuperVersion* sv, const Slice& key,
 }
 
 
-GroupLeaderWriterGuard::GroupLeaderWriterGuard()
-  : write_thread_(nullptr)
-  , writer_(nullptr)
-  , leader_(false) {
-}
-
-// There may be more than two instance of RocksDB in the process, but every GroupLeaderWriterGuard would release
-// it writer before destruct
-GroupLeaderWriterGuard::GroupLeaderWriterGuard(
-        WriteThread* write_thread, InstrumentedMutex* mu)
-  : write_thread_(write_thread)
-  , writer_(GetLocalWriter(write_thread))
-  , leader_(false){
-  if (write_thread_ && writer_->state.load(std::memory_order_relaxed) == WriteThread::STATE_INIT) {
-    write_thread_->EnterUnbatched(writer_, mu);
-    leader_ = true;
-  }
-}
-
-GroupLeaderWriterGuard::~GroupLeaderWriterGuard() {
-  if (leader_) {
-    write_thread_->ExitUnbatched(writer_);
-    writer_->state.store(WriteThread::STATE_INIT, std::memory_order_relaxed);
-    writer_->link_newer = writer_->link_older = nullptr;
-  }
-}
-
-WriteThread::Writer* GroupLeaderWriterGuard::GetLocalWriter(WriteThread* write_thread) {
-  if (write_thread != nullptr) {
-    thread_local std::unordered_map<std::uintptr_t, WriteThread::Writer*> writers;
-    auto addr = reinterpret_cast<std::uintptr_t>(write_thread);
-    auto iter = writers.find(addr);
-    if (iter == writers.end()) {
-      WriteThread::Writer* writer = new WriteThread::Writer;
-      writers.insert(std::make_pair(addr, writer));
-      return writer;
-    } else {
-      return iter->second;
-    }
-  }
-  return nullptr;
-}
-
 Status DBImpl::IngestExternalFile(
     ColumnFamilyHandle* column_family,
     const std::vector<std::string>& external_files,
@@ -4248,5 +4205,48 @@ Status DBImpl::ReserveFileNumbersBeforeIngestion(
   return s;
 }
 #endif  // ROCKSDB_LITE
+
+GroupLeaderWriterGuard::GroupLeaderWriterGuard()
+  : write_thread_(nullptr)
+  , writer_(nullptr)
+  , leader_(false) {
+}
+
+// There may be more than two instance of RocksDB in the process, but every GroupLeaderWriterGuard would release
+// it writer before destruct
+GroupLeaderWriterGuard::GroupLeaderWriterGuard(
+        WriteThread* write_thread, InstrumentedMutex* mu)
+  : write_thread_(write_thread)
+  , writer_(GetLocalWriter(write_thread))
+  , leader_(false){
+  if (write_thread_ && writer_->state.load(std::memory_order_relaxed) == WriteThread::STATE_INIT) {
+    write_thread_->EnterUnbatched(writer_, mu);
+    leader_ = true;
+  }
+}
+
+GroupLeaderWriterGuard::~GroupLeaderWriterGuard() {
+  if (leader_) {
+    write_thread_->ExitUnbatched(writer_);
+    writer_->state.store(WriteThread::STATE_INIT, std::memory_order_relaxed);
+    writer_->link_newer = writer_->link_older = nullptr;
+  }
+}
+
+WriteThread::Writer* GroupLeaderWriterGuard::GetLocalWriter(WriteThread* write_thread) {
+  if (write_thread != nullptr) {
+    thread_local std::unordered_map<std::uintptr_t, WriteThread::Writer*> writers;
+    auto addr = reinterpret_cast<std::uintptr_t>(write_thread);
+    auto iter = writers.find(addr);
+    if (iter == writers.end()) {
+      WriteThread::Writer* writer = new WriteThread::Writer;
+      writers.insert(std::make_pair(addr, writer));
+      return writer;
+    } else {
+      return iter->second;
+    }
+  }
+  return nullptr;
+}
 
 }  // namespace rocksdb
