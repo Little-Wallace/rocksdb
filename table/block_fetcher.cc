@@ -33,34 +33,34 @@ namespace rocksdb {
 inline
 void BlockFetcher::CheckBlockChecksum() {
   // Check the crc of the type and the block contents
-  if (read_options_.verify_checksums) {
-    const char* data = slice_.data();  // Pointer to where Read put the data
-    PERF_TIMER_GUARD(block_checksum_time);
-    uint32_t value = DecodeFixed32(data + block_size_ + 1);
-    uint32_t actual = 0;
-    switch (footer_.checksum()) {
-      case kNoChecksum:
-        break;
-      case kCRC32c:
-        value = crc32c::Unmask(value);
-        actual = crc32c::Value(data, block_size_ + 1);
-        break;
-      case kxxHash:
-        actual = XXH32(data, static_cast<int>(block_size_) + 1, 0);
-        break;
-      default:
-        status_ = Status::Corruption(
-            "unknown checksum type " + ToString(footer_.checksum()) + " in " +
-            file_->file_name() + " offset " + ToString(handle_.offset()) +
-            " size " + ToString(block_size_));
-    }
-    if (status_.ok() && actual != value) {
-      status_ = Status::Corruption(
-          "block checksum mismatch: expected " + ToString(actual) + ", got " +
-          ToString(value) + "  in " + file_->file_name() + " offset " +
-          ToString(handle_.offset()) + " size " + ToString(block_size_));
-    }
-  }
+//  if (read_options_.verify_checksums) {
+//    const char* data = slice_.data();  // Pointer to where Read put the data
+//    PERF_TIMER_GUARD(block_checksum_time);
+//    uint32_t value = DecodeFixed32(data + block_size_ + 1);
+//    uint32_t actual = 0;
+//    switch (footer_.checksum()) {
+//      case kNoChecksum:
+//        break;
+//      case kCRC32c:
+//        value = crc32c::Unmask(value);
+//        actual = crc32c::Value(data, block_size_ + 1);
+//        break;
+//      case kxxHash:
+//        actual = XXH32(data, static_cast<int>(block_size_) + 1, 0);
+//        break;
+//      default:
+//        status_ = Status::Corruption(
+//            "unknown checksum type " + ToString(footer_.checksum()) + " in " +
+//            file_->file_name() + " offset " + ToString(handle_.offset()) +
+//            " size " + ToString(block_size_));
+//    }
+//    if (status_.ok() && actual != value) {
+//      status_ = Status::Corruption(
+//          "block checksum mismatch: expected " + ToString(actual) + ", got " +
+//          ToString(value) + "  in " + file_->file_name() + " offset " +
+//          ToString(handle_.offset()) + " size " + ToString(block_size_));
+//    }
+//  }
 }
 
 inline
