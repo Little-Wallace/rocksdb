@@ -10,7 +10,7 @@
 #include <set>
 
 #include "memory/arena.h"
-#include "memtable/raft_hash_list.h"
+#include "raft_hash_list.h"
 #include "rocksdb/env.h"
 #include "test_util/testharness.h"
 #include "util/coding.h"
@@ -60,14 +60,14 @@ class RaftMemTableTest : public testing::Test {
 };
 
 TEST_F(RaftMemTableTest, InsertAndLookup) {
-  const int R = 7;
-  const int L = 2049;
+  const int R = 120;
+  const int L = 1000;
   Random rnd(1000);
   std::set<Key> keys;
   Arena arena;
   const std::string prefix = "ab";
 
-  RaftHashList table(&arena, prefix, 1024, 1);
+  RaftHashList table(&arena, prefix, 24, 1);
   std::vector<std::string> datas;
 
   for (int i = 0; i < R; i++) {
@@ -113,7 +113,8 @@ TEST_F(RaftMemTableTest, InsertAndLookup) {
       AssertEqual(value, log);
       iter.Next();
     }
-    iter.SeekForPrev(EncodeKey(MakeKey(prefix, region, 1, start_index + L - 2)));
+    iter.SeekForPrev(
+        EncodeKey(MakeKey(prefix, region, 1, start_index + L - 2)));
     for (int j = L - 2; j >= 0; j--) {
       ASSERT_TRUE(iter.Valid());
       const char* value = iter.key();

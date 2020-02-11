@@ -2,8 +2,8 @@
 
 #include "db/memtable.h"
 #include "memory/arena.h"
-#include "memtable/raft_hash_list.h"
-#include "memtable/raft_memtable_factory.h"
+#include "raft_hash_list.h"
+#include "rocksdb/raft_memtable_factory.h"
 #include "rocksdb/memtablerep.h"
 
 namespace rocksdb {
@@ -46,6 +46,7 @@ class RaftMemTableRep : public MemTableRep {
     Insert(handle);
     return true;
   }
+  void InsertConcurrently(KeyHandle handle) override { Insert(handle); }
 
   // Returns true iff an entry that compares equal to key is in the list.
   bool Contains(const char* key) const override {

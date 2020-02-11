@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rocksdb/memtablerep.h>
+#include "rocksdb/memtablerep.h"
 // This uses a doubly skip list to store keys, which is similar to skip list,
 // but optimize for prev seek.
 namespace rocksdb {
@@ -17,7 +17,7 @@ class RaftMemTableFactory : public MemTableRepFactory {
                                          Logger* logger) override;
   const char* Name() const override { return "RaftMemTableFactory"; }
 
-  bool IsInsertConcurrentlySupported() const override { return false; }
+  bool IsInsertConcurrentlySupported() const override { return true; }
 
   bool CanHandleDuplicatedKey() const override { return true; }
 
