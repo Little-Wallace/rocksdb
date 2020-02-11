@@ -28,7 +28,26 @@
 
 namespace rocksdb {
 
+void DEBUG_print(const char* name, const Slice& transformed) {
+  printf("%s:", name);
+  for (size_t i = 0; i < transformed.size(); ++i) {
+    printf("%d,", static_cast<int>(static_cast<uint8_t>(transformed[i])));
+  }
+  printf("\n");
+}
 
+// If the length of key is less than sizeof(uint64_t), we add '\0' for it.
+static uint64_t DeserializeBigEndian(const char* src, size_t len) {
+  uint64_t result = 0;
+  for (unsigned long i = 0; i < sizeof(uint64_t); i++) {
+    uint64_t bit = 0;
+    if (i < len) {
+      bit = static_cast<uint64_t>(static_cast<unsigned char>(src[i]));
+    }
+    result |= bit << ((7 - i) * 8);
+  }
+  return result;
+}
 class RaftHashList {
   struct ListNode {
     uint64_t start_index;
@@ -41,6 +60,7 @@ class RaftHashList {
   struct Bucket {
     uint64_t hash_id;
     std::atomic<ListNode*> head_;
+    std::atomic<ListNode*> tail_;
     Allocator* const allocator_;
     std::atomic<const char*> meta[META_SIZE];
 
@@ -74,18 +94,6 @@ class RaftHashList {
   }
   ~RaftHashList() {}
 
-  // If the length of key is less than sizeof(uint64_t), we add '\0' for it.
-  static inline uint64_t GetHash(const char* src, size_t len) {
-    uint64_t result = 0;
-    for (unsigned long i = 0; i < sizeof(uint64_t); i++) {
-      uint64_t bit = 0;
-      if (i < len) {
-        bit = static_cast<uint64_t>(static_cast<unsigned char>(src[i]));
-      }
-      result |= bit << ((7 - i) * 8);
-    }
-    return result;
-  }
   static inline Slice decode_key(const char* key) {
     // The format of key is frozen and can be terated as a part of the API
     // contract. Refer to MemTable::Add for details.
@@ -97,7 +105,7 @@ class RaftHashList {
       size_t j = (hash + i) % bucket_size_;
       auto bucket = buckets_[j].load(std::memory_order_acquire);
       if (bucket == nullptr || bucket->hash_id == hash) {
-        return i;
+        return j;
       }
     }
     throw std::runtime_error("there has no bucket");
@@ -105,7 +113,7 @@ class RaftHashList {
   }
 
   static inline uint8_t GetFlag(const std::string& prefix, const Slice& slice) {
-    return slice[prefix.length() + sizeof(uint64_t)];
+    return static_cast<uint8_t>(slice[prefix.length() + sizeof(uint64_t)]);
   }
 
   char* Allocate(const size_t len) { return allocator_->Allocate(len); }
@@ -113,8 +121,16 @@ class RaftHashList {
   static inline uint64_t GetLogIndex(const std::string& prefix,
                                      const Slice& slice) {
     // sizeof(uint64_t) + sizeof(flag) == 9
-    return GetHash(slice.data() + prefix.length() + 9,
-                   slice.size() - prefix.length() - 9);
+    return DeserializeBigEndian(slice.data() + prefix.length() + 9,
+                                slice.size() - prefix.length() - 9);
+  }
+
+  void InsertString(const std::string& key) {
+    const uint32_t encoded_len = VarintLength(key.length()) + key.length();
+    char* buf = Allocate(encoded_len);
+    char* p = EncodeVarint32(buf, key.length());
+    memcpy(p, key.data(), key.length());
+    Insert(buf);
   }
 
   // Insert key into the list.
@@ -124,8 +140,8 @@ class RaftHashList {
       return;
     }
 
-    uint64_t hash = GetHash(transformed.data() + prefix_.length(),
-                            transformed.size() - prefix_.length());
+    uint64_t hash = DeserializeBigEndian(transformed.data() + prefix_.length(),
+                                         transformed.size() - prefix_.length());
     uint8_t flag = GetFlag(prefix_, transformed);
     auto bucketId = GetBucket(hash);
     auto bucket = buckets_[bucketId].load(std::memory_order_acquire);
@@ -136,7 +152,7 @@ class RaftHashList {
       if (flag == log_flag_) {
         bucket->InsertLogEntry(GetLogIndex(prefix_, transformed), key);
       } else {
-        bucket->meta[flag] = key;
+        bucket->meta[flag].store(key, std::memory_order_release);
       }
       buckets_[bucketId].store(bucket, std::memory_order_release);
       return;
@@ -144,7 +160,7 @@ class RaftHashList {
     if (flag == log_flag_) {
       bucket->InsertLogEntry(GetLogIndex(prefix_, transformed), key);
     } else {
-      bucket->meta[flag] = key;
+      bucket->meta[flag].store(key, std::memory_order_release);
     }
   }
 
@@ -153,8 +169,8 @@ class RaftHashList {
     if (!transformed.starts_with(prefix_)) {
       return nullptr;
     }
-    uint64_t hash = GetHash(transformed.data() + prefix_.length(),
-                            transformed.size() - prefix_.length());
+    uint64_t hash = DeserializeBigEndian(transformed.data() + prefix_.length(),
+                                         transformed.size() - prefix_.length());
     auto bucketId = GetBucket(hash);
     auto bucket = buckets_[bucketId].load(std::memory_order_acquire);
     if (bucket == nullptr) {
@@ -193,6 +209,7 @@ class RaftHashList {
     }
 
    private:
+      const char* SeekLogNodeForPrev(ListNode* node, uint64_t array_index);
     bool is_log_;
     ListNode* cur_node_;
     size_t index_;
@@ -273,8 +290,8 @@ class RaftHashList {
         }
         return;
       }
-      uint64_t hash =
-          GetHash(key + prefix_.length(), user_key.size() - prefix_.length());
+      uint64_t hash = DeserializeBigEndian(user_key.data() + prefix_.length(),
+                                           user_key.size() - prefix_.length());
       cur_bucket_ = buckets_.size();
       for (size_t i = 0; i < buckets_.size(); i++) {
         if (buckets_[i]->hash_id >= hash) {
@@ -293,6 +310,7 @@ class RaftHashList {
       uint8_t flag = user_key[prefix_.length() + sizeof(uint64_t)];
       if (flag == log_flag_) {
         uint64_t index = GetLogIndex(prefix_, user_key);
+        // buckets_[cur_bucket_]->hash_id, index);
         iter_.SeekLog(index);
         if (!iter_.Valid()) {
           iter_.SeekToFirst();
@@ -314,9 +332,8 @@ class RaftHashList {
         return;
       }
       cur_bucket_ = buckets_.size();
-      uint64_t hash =
-          GetHash(key + prefix_.length(), user_key.size() - prefix_.length());
-
+      uint64_t hash = DeserializeBigEndian(user_key.data() + prefix_.length(),
+                                           user_key.size() - prefix_.length());
       for (size_t i = buckets_.size(); i > 0; i--) {
         if (buckets_[i - 1]->hash_id <= hash) {
           cur_bucket_ = i - 1;
@@ -349,9 +366,13 @@ class RaftHashList {
     // Position at the first entry in list.
     // Final state of iterator is Valid() iff list is not empty.
     void SeekToFirst() {
-      cur_bucket_ = 0;
+      if (cur_bucket_ > 0) {
+        cur_bucket_ = 0;
+        if (!buckets_.empty()) {
+          iter_ = BucketIterator(buckets_[cur_bucket_]);
+        }
+      }
       if (!buckets_.empty()) {
-        iter_ = BucketIterator(buckets_[cur_bucket_]);
         iter_.SeekToFirst();
       }
     }
@@ -379,9 +400,14 @@ class RaftHashList {
 };
 
 void RaftHashList::Bucket::InsertLogEntry(uint64_t index, const char* key) {
-  ListNode* cur = head_;
-  ListNode* last = nullptr;
+  ListNode* cur = tail_.load(std::memory_order_acquire);
   uint64_t start_index = (index >> ARRAY_BIT);
+  if (cur != nullptr && cur->start_index == start_index) {
+    cur->data[index & ARRAY_MASK].store(key, std::memory_order_release);
+    return;
+  }
+  cur = head_.load(std::memory_order_acquire);
+  ListNode* last = nullptr;
   while (cur != nullptr) {
     if (cur->start_index >= start_index) {
       break;
@@ -395,7 +421,11 @@ void RaftHashList::Bucket::InsertLogEntry(uint64_t index, const char* key) {
     auto mem = allocator_->AllocateAligned(sizeof(ListNode));
     auto x = new (mem) ListNode;
     x->next_.store(cur, std::memory_order_relaxed);
+    x->start_index = start_index;
     x->data[index & ARRAY_MASK].store(key, std::memory_order_release);
+    if (cur == nullptr) {
+      tail_.store(x, std::memory_order_release);
+    }
     if (last == nullptr) {
       head_.store(x, std::memory_order_release);
     } else {
@@ -431,10 +461,10 @@ void RaftHashList::BucketIterator::SeekToFirst() {
 
 void RaftHashList::BucketIterator::SeekToLast() {
   is_log_ = true;
-  for (size_t i = META_SIZE; i >= 0; i--) {
-    key_ = bucket_->meta[i].load(std::memory_order_acquire);
+  for (size_t i = META_SIZE; i > 0; i--) {
+    key_ = bucket_->meta[i - 1].load(std::memory_order_acquire);
     if (key_ != nullptr) {
-      index_ = i;
+      index_ = i - 1;
       is_log_ = false;
       return;
     }
@@ -449,7 +479,7 @@ void RaftHashList::BucketIterator::SeekToLast() {
   for (size_t i = ARRAY_SIZE; i > 0; i--) {
     key_ = cur_node_->data[i - 1].load(std::memory_order_acquire);
     if (key_ != nullptr) {
-      index_ = i;
+      index_ = cur_node_->start_index << ARRAY_BIT | (i - 1);
       return;
     }
   }
@@ -474,9 +504,25 @@ void RaftHashList::BucketIterator::SeekLog(uint64_t index) {
         }
         array_index++;
       }
+      array_index = 0;
     }
     cur_node_ = cur_node_->next_.load(std::memory_order_acquire);
   }
+}
+
+const char* RaftHashList::BucketIterator::SeekLogNodeForPrev(ListNode* node, uint64_t array_index) {
+  cur_node_ = node;
+  if (cur_node_ == nullptr) {
+    return nullptr;
+  }
+  key_ = cur_node_->data[array_index].load(std::memory_order_acquire);
+  while (key_ == nullptr && array_index > 0) {
+    array_index--;
+    key_ = cur_node_->data[array_index].load(std::memory_order_acquire);
+  };
+  index_ = cur_node_->start_index << ARRAY_BIT |
+           static_cast<uint64_t>(array_index);
+  return key_;
 }
 
 void RaftHashList::BucketIterator::SeekLogForPrev(uint64_t index) {
@@ -485,23 +531,23 @@ void RaftHashList::BucketIterator::SeekLogForPrev(uint64_t index) {
   key_ = nullptr;
   cur_node_ = bucket_->head_.load(std::memory_order_acquire);
   ListNode* last = nullptr;
-  int array_index = index;
+  ListNode* lastlast = nullptr;
+  int array_index = ARRAY_MASK;
   while (cur_node_ != nullptr && cur_node_->start_index <= start_index) {
-    array_index = static_cast<int>(index & ARRAY_MASK);
-    do {
-      key_ = cur_node_->data[array_index].load(std::memory_order_acquire);
-      if (key_ != nullptr) {
-        break;
-      }
-      array_index--;
-    } while (array_index > 0);
+    lastlast = last;
     last = cur_node_;
     cur_node_ = cur_node_->next_.load(std::memory_order_acquire);
   }
   cur_node_ = last;
-  if (cur_node_ != nullptr) {
-    index_ = cur_node_->start_index << ARRAY_BIT |
-             static_cast<uint64_t>(array_index);
+  if (last != nullptr) {
+    if (last->start_index == start_index) {
+      array_index = static_cast<int>(index & ARRAY_MASK);
+      if (SeekLogNodeForPrev(last, array_index) == nullptr) {
+        SeekLogNodeForPrev(lastlast, ARRAY_MASK);
+      }
+    } else {
+      SeekLogNodeForPrev(last, ARRAY_MASK);
+    }
   }
 }
 
@@ -520,32 +566,41 @@ void RaftHashList::BucketIterator::SeekMeta(uint8_t index) {
 void RaftHashList::BucketIterator::SeekMetaForPrev(uint8_t index) {
   is_log_ = false;
   index_ = index;
-  while (index_ >= 0) {
+  key_ = bucket_->meta[index_].load(std::memory_order_acquire);
+  while (key_ == nullptr && index_ > 0) {
+    index_ --;
     key_ = bucket_->meta[index_].load(std::memory_order_acquire);
-    if (key_ != nullptr) {
-      return;
-    }
+  }
+  if (!key_) {
+    index_ = ARRAY_SIZE;
   }
 }
 
 void RaftHashList::BucketIterator::Next() {
   if (is_log_) {
     SeekLog(index_ + 1);
-    if (Valid()) {
+    if (cur_node_ != nullptr) {
       return;
     }
-    index_ = 0;
+    SeekMeta(0);
+  } else {
+    SeekMeta(index_ + 1);
   }
-  SeekMeta(index_ + 1);
 }
 
 void RaftHashList::BucketIterator::Prev() {
-  if (!is_log_ && index_ > 0) {
-    SeekMetaForPrev(index_ - 1);
-    if (Valid()) {
-      return;
+  if (!is_log_) {
+    if (index_ > 0) {
+      SeekMetaForPrev(index_ - 1);
+      if (index_ < META_SIZE) {
+        return;
+      }
     }
     index_ = std::numeric_limits<size_t>::max();
+  }
+  if (index_ == 0) {
+    cur_node_ = nullptr;
+    return;
   }
   SeekLogForPrev(index_ - 1);
 }
