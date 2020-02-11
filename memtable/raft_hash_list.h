@@ -58,7 +58,7 @@ class RaftHashList {
     }
   };
   struct Bucket {
-    uint64_t hash_id;
+    uint64_t hash_id_;
     std::atomic<ListNode*> head_;
     std::atomic<ListNode*> tail_;
     Allocator* const allocator_;
@@ -66,7 +66,7 @@ class RaftHashList {
     std::atomic<const char*> meta[META_SIZE];
 
     Bucket(uint64_t hash_id, Allocator* allocator)
-        : hash_id(hash_id),
+        : hash_id_(hash_id),
           head_(nullptr),
           tail_(nullptr),
           allocator_(allocator) {
@@ -87,7 +87,7 @@ class RaftHashList {
       for (size_t i = 0; i < bucket_size_; i++) {
         size_t j = (hash + i) % bucket_size_;
         auto bucket = buckets_[j].load(std::memory_order_acquire);
-        if (bucket == nullptr || bucket->hash_id == hash) {
+        if (bucket == nullptr || bucket->hash_id_ == hash) {
           return bucket;
         }
       }
@@ -102,7 +102,7 @@ class RaftHashList {
           bucket = new (mem) Bucket(hash, allocator);
           buckets_[j].store(bucket, std::memory_order_release);
           return bucket;
-        } else if (bucket->hash_id == hash) {
+        } else if (bucket->hash_id_ == hash) {
           return bucket;
         }
       }
@@ -186,7 +186,7 @@ class RaftHashList {
         for (size_t i = 0; i < table->bucket_size_; i++) {
           Bucket* b = table->buckets_[i].load(std::memory_order_acquire);
           for (size_t j = 0; j < array->bucket_size_; j++) {
-            size_t k = (j + b->hash_id) % array->bucket_size_;
+            size_t k = (j + b->hash_id_) % array->bucket_size_;
             if (array->buckets_[k].load(std::memory_order_relaxed) == nullptr) {
               array->buckets_[k].store(b, std::memory_order_relaxed);
               break;
@@ -279,7 +279,7 @@ class RaftHashList {
       cur_bucket_ = buckets_.size();
       std::sort(buckets_.begin(), buckets_.end(),
                 [=](const Bucket* a, const Bucket* b) {
-                  return a->hash_id < b->hash_id;
+                  return a->hash_id_ < b->hash_id_;
                 });
     }
 
@@ -341,7 +341,7 @@ class RaftHashList {
                                            user_key.size() - prefix_.length());
       cur_bucket_ = buckets_.size();
       for (size_t i = 0; i < buckets_.size(); i++) {
-        if (buckets_[i]->hash_id >= hash) {
+        if (buckets_[i]->hash_id_ >= hash) {
           cur_bucket_ = i;
           break;
         }
@@ -382,7 +382,7 @@ class RaftHashList {
       uint64_t hash = DeserializeBigEndian(user_key.data() + prefix_.length(),
                                            user_key.size() - prefix_.length());
       for (size_t i = buckets_.size(); i > 0; i--) {
-        if (buckets_[i - 1]->hash_id <= hash) {
+        if (buckets_[i - 1]->hash_id_ <= hash) {
           cur_bucket_ = i - 1;
           break;
         }
