@@ -16,12 +16,13 @@
 #include <unistd.h>
 #endif
 #include <fcntl.h>
-#include <cinttypes>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
+
 #include <atomic>
+#include <cinttypes>
 #include <condition_variable>
 #include <cstddef>
 #include <memory>
@@ -46,6 +47,7 @@
 #include "rocksdb/options.h"
 #include "rocksdb/perf_context.h"
 #include "rocksdb/persistent_cache.h"
+#include "rocksdb/raft_memtable_factory.h"
 #include "rocksdb/rate_limiter.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
@@ -88,6 +90,7 @@ DEFINE_string(
     "fillsync,"
     "fillrandom,"
     "filluniquerandomdeterministic,"
+    "fillraft,"
     "overwrite,"
     "readrandom,"
     "newiterator,"
@@ -1163,6 +1166,7 @@ enum RepFactory {
   kPrefixHash,
   kVectorRep,
   kHashLinkedList,
+  kRaftHashList,
 };
 
 static enum RepFactory StringToRepFactory(const char* ctype) {
@@ -1176,6 +1180,8 @@ static enum RepFactory StringToRepFactory(const char* ctype) {
     return kVectorRep;
   else if (!strcasecmp(ctype, "hash_linkedlist"))
     return kHashLinkedList;
+  else if (!strcasecmp(ctype, "raft_hash_list"))
+    return kRaftHashList;
 
   fprintf(stdout, "Cannot parse memreptable %s\n", ctype);
   return kSkipList;
@@ -2162,6 +2168,7 @@ class Benchmark {
   bool use_blob_db_;
   std::vector<std::string> keys_;
   bool use_multi_write_;
+  bool use_raft_keys_;
 
   class ErrorHandlerListener : public EventListener {
    public:
@@ -2311,6 +2318,9 @@ class Benchmark {
         break;
       case kHashLinkedList:
         fprintf(stdout, "Memtablerep: hash_linkedlist\n");
+        break;
+      case kRaftHashList:
+        fprintf(stdout, "Memtablerep: raft_hash_list\n");
         break;
     }
     fprintf(stdout, "Perf Level: %d\n", FLAGS_perf_level);
@@ -2497,7 +2507,8 @@ class Benchmark {
 #else
         use_blob_db_(false),
 #endif  // !ROCKSDB_LITE
-        use_multi_write_(FLAGS_use_multi_thread_write) {
+        use_multi_write_(FLAGS_use_multi_thread_write),
+        use_raft_keys_(false) {
     // use simcache instead of cache
     if (FLAGS_simcache_size >= 0) {
       if (FLAGS_cache_numshardbits >= 1) {
@@ -2594,6 +2605,26 @@ class Benchmark {
     }
     char* start = const_cast<char*>(key->data());
     char* pos = start;
+    if (use_raft_keys_) {
+      pos[0] = 'a';
+      pos[1] = 'b';
+      uint64_t region = v >> 10;
+      uint64_t index = v & 1023;
+      for (unsigned long i = 0; i < sizeof(uint64_t); i++) {
+        pos[i + 2] = static_cast<char>(
+            (region >> (sizeof(uint64_t) - 1 - i) * 8) & 0xFFLL);
+      }
+      if (index < 100) {
+        pos[10] = static_cast<char>(static_cast<uint8_t>(index + 2));
+      } else {
+        pos[10] = static_cast<char>(static_cast<uint8_t>(1));
+        for (unsigned long i = 0; i < sizeof(uint64_t); i++) {
+          pos[11 + i] = static_cast<char>(
+              (index >> (sizeof(uint64_t) - 1 - i) * 8) & 0xFFLL);
+        }
+      }
+      return;
+    }
     if (keys_per_prefix_ > 0) {
       int64_t num_prefix = num_keys / keys_per_prefix_;
       int64_t prefix = v % num_prefix;
@@ -2780,6 +2811,9 @@ class Benchmark {
         fresh_db = true;
         entries_per_batch_ = 1000;
         method = &Benchmark::WriteSeq;
+      } else if (name == "fillraft") {
+        fresh_db = true;
+        method = &Benchmark::WriteRaft;
       } else if (name == "fillrandom") {
         fresh_db = true;
         method = &Benchmark::WriteRandom;
@@ -3511,6 +3545,8 @@ class Benchmark {
         options.memtable_factory.reset(
           new VectorRepFactory
         );
+      case kRaftHashList:
+        options.memtable_factory.reset(new RaftMemTableFactory("ab", 1));
         break;
 #else
       default:
@@ -4061,6 +4097,12 @@ class Benchmark {
 
   void WriteRandom(ThreadState* thread) {
     DoWrite(thread, RANDOM);
+  }
+
+  void WriteRaft(ThreadState* thread) {
+    use_raft_keys_ = true;
+    key_size_ = 19;
+    DoWrite(thread, SEQUENTIAL);
   }
 
   void WriteUniqueRandom(ThreadState* thread) {
