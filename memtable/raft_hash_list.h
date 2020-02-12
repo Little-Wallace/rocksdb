@@ -123,8 +123,9 @@ class RaftHashList {
       : log_flag_(log_flag),
         allocator_(allocator),
         prefix_(prefix) {
-    auto mem = allocator_->AllocateAligned(
-        sizeof(HashTableArray) + sizeof(std::atomic<void*>) * bucket_size);
+    auto mem = allocator_->AllocateAligned(sizeof(HashTableArray) +
+                                           sizeof(std::atomic<void*>) *
+                                               (bucket_size - 1));
     // auto t = new (mem) std::atomic<Bucket*>[bucket_size];
     auto t = new (mem) HashTableArray(bucket_size);
     table_.store(t, std::memory_order_relaxed);
@@ -179,9 +180,9 @@ class RaftHashList {
       table = table_.load(std::memory_order_seq_cst);
       bucket = table->GetBucketOrCreate(hashVal, allocator_);
       if (bucket == nullptr) {
-        auto mem = allocator_->AllocateAligned(sizeof(HashTableArray) +
-                                               sizeof(std::atomic<void*>) *
-                                                   (table->bucket_size_ * 2));
+        auto mem = allocator_->AllocateAligned(
+            sizeof(HashTableArray) +
+            sizeof(std::atomic<void*>) * (table->bucket_size_ * 2 - 1));
         HashTableArray* array =
             new (mem) HashTableArray(table->bucket_size_ * 2);
         for (size_t i = 0; i < table->bucket_size_; i++) {
@@ -232,24 +233,32 @@ class RaftHashList {
 
   class BucketIterator {
    public:
-    BucketIterator() : key_(nullptr){};
-    explicit BucketIterator(Bucket* bucket)
-        : is_log_(false), index_(META_SIZE), bucket_(bucket), key_(nullptr) {
+    BucketIterator()
+        : log_flag_(0), cur_node_(nullptr), bucket_(nullptr), key_(nullptr){};
+    explicit BucketIterator(Bucket* bucket, uint8_t log_flag)
+        : log_flag_(log_flag),
+          is_log_(false),
+          index_(META_SIZE),
+          bucket_(bucket),
+          key_(nullptr) {
       cur_node_ = bucket_->head_.load(std::memory_order_relaxed);
     }
     void SeekToFirst();
     void SeekToLast();
-    void SeekLog(uint64_t index);
-    void SeekMeta(uint8_t index);
-    void SeekLogForPrev(uint64_t index);
-    void SeekMetaForPrev(uint8_t index);
+    void Seek(uint64_t region, uint8_t log, uint64_t index);
+    void SeekForPrev(uint64_t region, uint8_t log, uint64_t index);
     void Next();
     void Prev();
     const char* key() const { return key_; }
     bool Valid() const { return key_ != nullptr; }
 
    private:
+    void SeekLog(uint64_t index);
+    void SeekMeta(uint8_t index);
+    void SeekLogForPrev(uint64_t index);
+    void SeekMetaForPrev(uint8_t index);
     const char* SeekLogNodeForPrev(ListNode* node, uint64_t array_index);
+    uint8_t log_flag_;
     bool is_log_;
     ListNode* cur_node_;
     size_t index_;
@@ -263,7 +272,9 @@ class RaftHashList {
     // Initialize an iterator over the specified list.
     // The returned iterator is not valid.
     Iterator(const RaftHashList& table, size_t suffix_len)
-        : log_flag_(table.log_flag_), prefix_(table.prefix_), suffix_len_(suffix_len) {
+        : log_flag_(table.log_flag_),
+          prefix_(table.prefix_),
+          suffix_len_(suffix_len) {
       HashTableArray* array = table.table_.load(std::memory_order_acquire);
       for (size_t i = 0; i < array->bucket_size_; i++) {
         auto bucket = array->buckets_[i].load(std::memory_order_seq_cst);
@@ -295,7 +306,7 @@ class RaftHashList {
       iter_.Next();
       while (cur_bucket_ + 1 < buckets_.size() && !iter_.Valid()) {
         cur_bucket_++;
-        iter_ = BucketIterator(buckets_[cur_bucket_]);
+        iter_ = BucketIterator(buckets_[cur_bucket_], log_flag_);
         iter_.SeekToFirst();
         if (iter_.Valid()) {
           return;
@@ -312,7 +323,7 @@ class RaftHashList {
       iter_.Prev();
       while (cur_bucket_ > 0 && !iter_.Valid()) {
         cur_bucket_--;
-        iter_ = BucketIterator(buckets_[cur_bucket_]);
+        iter_ = BucketIterator(buckets_[cur_bucket_], log_flag_);
         iter_.SeekToLast();
         if (iter_.Valid()) {
           return;
@@ -337,40 +348,39 @@ class RaftHashList {
       }
       uint64_t hash = DeserializeBigEndian(user_key.data() + prefix_.length(),
                                            user_key.size() - prefix_.length());
-      cur_bucket_ = buckets_.size();
-      for (size_t i = 0; i < buckets_.size(); i++) {
-        if (buckets_[i]->hash_id_ >= hash) {
-          cur_bucket_ = i;
-          break;
+      if (!CanReuseIterator(hash)) {
+        cur_bucket_ = buckets_.size();
+        thread_local Bucket tmp_bucket(hash, nullptr);
+        tmp_bucket.hash_id_ = hash;
+        auto iter = std::lower_bound(
+            buckets_.begin(), buckets_.end(), &tmp_bucket,
+            [](Bucket* a, Bucket* b) { return a->hash_id_ < b->hash_id_; });
+        if (iter == buckets_.end()) {
+          cur_bucket_ = buckets_.size();
+          return;
         }
+        cur_bucket_ = iter - buckets_.begin();
+        iter_ = BucketIterator(buckets_[cur_bucket_], log_flag_);
       }
-      if (cur_bucket_ >= buckets_.size()) {
-        return;
-      }
-      iter_ = BucketIterator(buckets_[cur_bucket_]);
       if (data_len == prefix_.length() + sizeof(uint64_t)) {
         iter_.SeekToFirst();
         while (cur_bucket_ + 1 < buckets_.size() && !iter_.Valid()) {
           cur_bucket_++;
-          iter_ = BucketIterator(buckets_[cur_bucket_]);
+          iter_ = BucketIterator(buckets_[cur_bucket_], log_flag_);
           iter_.SeekToFirst();
         }
         return;
       }
       uint8_t flag = user_key[prefix_.length() + sizeof(uint64_t)];
+      uint64_t index = 0;
       if (flag == log_flag_) {
-        uint64_t index = GetLogIndex(prefix_, user_key);
-        // buckets_[cur_bucket_]->hash_id, index);
-        iter_.SeekLog(index);
-        if (!iter_.Valid()) {
-          iter_.SeekMeta(0);
-        }
-      } else {
-        iter_.SeekMeta(flag);
+        index = GetLogIndex(prefix_, user_key);
       }
+      iter_.Seek(hash, flag, index);
+
       while (cur_bucket_ + 1 < buckets_.size() && !iter_.Valid()) {
         cur_bucket_++;
-        iter_ = BucketIterator(buckets_[cur_bucket_]);
+        iter_ = BucketIterator(buckets_[cur_bucket_], log_flag_);
         iter_.SeekToFirst();
       }
     }
@@ -400,24 +410,25 @@ class RaftHashList {
         return;
       }
 
+      iter_ = BucketIterator(buckets_[cur_bucket_], log_flag_);
       if (data_len == prefix_.length() + sizeof(uint64_t)) {
-        if (cur_bucket_ == 0) {
-          cur_bucket_ = buckets_.size();
-          return;
-        }
-        cur_bucket_--;
-      }
-      iter_ = BucketIterator(buckets_[cur_bucket_]);
-      uint8_t flag = user_key[prefix_.length() + sizeof(uint64_t)];
-      if (flag != log_flag_) {
-        iter_.SeekMetaForPrev(flag);
-        if (!iter_.Valid()) {
+        while (cur_bucket_ > 0) {
+          cur_bucket_--;
+          iter_ = BucketIterator(buckets_[cur_bucket_], log_flag_);
           iter_.SeekToLast();
+          if (iter_.Valid()) {
+            return;
+          }
         }
+        cur_bucket_ = buckets_.size();
         return;
       }
-      uint64_t index = GetLogIndex(prefix_, user_key);
-      iter_.SeekLogForPrev(index);
+      uint8_t flag = user_key[prefix_.length() + sizeof(uint64_t)];
+      uint64_t index = 0;
+      if (flag == log_flag_) {
+        index = GetLogIndex(prefix_, user_key);
+      }
+      iter_.SeekForPrev(hash, flag, index);
     }
 
     // Position at the first entry in list.
@@ -425,7 +436,7 @@ class RaftHashList {
     void SeekToFirst() {
       cur_bucket_ = 0;
       while (cur_bucket_ < buckets_.size()) {
-        iter_ = BucketIterator(buckets_[cur_bucket_]);
+        iter_ = BucketIterator(buckets_[cur_bucket_], log_flag_);
         iter_.SeekToFirst();
         if (iter_.Valid()) {
           break;
@@ -439,16 +450,22 @@ class RaftHashList {
     void SeekToLast() {
       if (!buckets_.empty()) {
         cur_bucket_ = buckets_.size() - 1;
-        iter_ = BucketIterator(buckets_[cur_bucket_]);
+        iter_ = BucketIterator(buckets_[cur_bucket_], log_flag_);
         iter_.SeekToLast();
         while (cur_bucket_ > 0 && !iter_.Valid()) {
           cur_bucket_--;
-          iter_ = BucketIterator(buckets_[cur_bucket_]);
+          iter_ = BucketIterator(buckets_[cur_bucket_], log_flag_);
           iter_.SeekToLast();
         }
       } else {
         cur_bucket_ = buckets_.size();
       }
+    }
+
+   private:
+    bool CanReuseIterator(uint64_t hash) {
+      return cur_bucket_ < buckets_.size() && iter_.Valid() &&
+             buckets_[cur_bucket_]->hash_id_ == hash;
     }
 
    protected:
@@ -556,6 +573,7 @@ void RaftHashList::BucketIterator::SeekLog(uint64_t index) {
   uint64_t start_index = (index >> ARRAY_BIT);
   index_ = index;
   is_log_ = true;
+  key_ = nullptr;
 
   uint64_t array_index = index & ARRAY_MASK;
   while (cur_node_ != nullptr) {
@@ -591,6 +609,32 @@ const char* RaftHashList::BucketIterator::SeekLogNodeForPrev(
   index_ =
       cur_node_->start_index << ARRAY_BIT | static_cast<uint64_t>(array_index);
   return key_;
+}
+
+void RaftHashList::BucketIterator::Seek(uint64_t region, uint8_t flag,
+                                        uint64_t index) {
+  if (flag == log_flag_) {
+    cur_node_ = bucket_->head_.load(std::memory_order_acquire);
+    SeekLog(index);
+    if (key_ != nullptr) {
+      return;
+    }
+    flag = 0;
+  }
+  SeekMeta(flag);
+}
+
+void RaftHashList::BucketIterator::SeekForPrev(uint64_t region, uint8_t flag,
+                                               uint64_t index) {
+  if (flag != log_flag_) {
+    SeekMetaForPrev(flag);
+    if (key_ != nullptr) {
+      return;
+    }
+    index_ = std::numeric_limits<size_t>::max();
+  }
+  cur_node_ = bucket_->head_.load(std::memory_order_acquire);
+  SeekLogForPrev(index);
 }
 
 void RaftHashList::BucketIterator::SeekLogForPrev(uint64_t index) {

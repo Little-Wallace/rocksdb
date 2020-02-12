@@ -61,7 +61,10 @@ class RaftMemTableRep : public MemTableRep {
   void Get(const LookupKey& k, void* callback_args,
            bool (*callback_func)(void* arg, const char* entry)) override {
     const char* key = k.memtable_key().data();
-    callback_func(callback_args, table_.GetKey(key));
+    const char* value = table_.GetKey(key);
+    if (value != nullptr) {
+      callback_func(callback_args, value);
+    }
   }
 
   uint64_t ApproximateNumEntries(const Slice& start_ikey,

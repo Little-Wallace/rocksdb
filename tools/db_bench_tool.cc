@@ -2780,6 +2780,9 @@ class Benchmark {
           }
         }
       }
+      if (use_raft_keys_) {
+        key_size_ = 19;
+      }
 
       // Both fillseqdeterministic and filluniquerandomdeterministic
       // fill the levels except the max level with UNIQUE_RANDOM

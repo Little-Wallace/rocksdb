@@ -60,8 +60,8 @@ class RaftMemTableTest : public testing::Test {
 };
 
 TEST_F(RaftMemTableTest, InsertAndLookup) {
-  const int R = 120;
-  const int L = 1000;
+  const int R = 12;
+  const int L = 10000;
   Random rnd(1000);
   std::set<Key> keys;
   Arena arena;
@@ -127,6 +127,7 @@ TEST_F(RaftMemTableTest, InsertAndLookup) {
   }
   std::sort(datas.begin(), datas.end());
   datas.erase(std::unique(datas.begin(), datas.end()), datas.end());
+
   RaftHashList::Iterator iter(table, 0);
   iter.SeekToFirst();
   for (size_t i = 0; i < datas.size(); i++) {
