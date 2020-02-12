@@ -262,8 +262,8 @@ class RaftHashList {
    public:
     // Initialize an iterator over the specified list.
     // The returned iterator is not valid.
-    Iterator(const RaftHashList& table)
-        : log_flag_(table.log_flag_), prefix_(table.prefix_) {
+    Iterator(const RaftHashList& table, size_t suffix_len)
+        : log_flag_(table.log_flag_), prefix_(table.prefix_), suffix_len_(suffix_len) {
       HashTableArray* array = table.table_.load(std::memory_order_acquire);
       for (size_t i = 0; i < array->bucket_size_; i++) {
         auto bucket = array->buckets_[i].load(std::memory_order_seq_cst);
@@ -326,7 +326,8 @@ class RaftHashList {
     // Advance to the first entry with a key >= target
     void Seek(const char* key) {
       Slice user_key = decode_key(key);
-      if (user_key.size() < prefix_.length() + sizeof(uint64_t)) {
+      size_t data_len = user_key.size() - suffix_len_;
+      if (data_len < prefix_.length() + sizeof(uint64_t)) {
         if (user_key.compare(Slice(prefix_)) <= 0) {
           SeekToFirst();
         } else {
@@ -347,7 +348,7 @@ class RaftHashList {
         return;
       }
       iter_ = BucketIterator(buckets_[cur_bucket_]);
-      if (user_key.size() == prefix_.length() + sizeof(uint64_t)) {
+      if (data_len == prefix_.length() + sizeof(uint64_t)) {
         iter_.SeekToFirst();
         while (cur_bucket_ + 1 < buckets_.size() && !iter_.Valid()) {
           cur_bucket_++;
@@ -377,7 +378,8 @@ class RaftHashList {
     // Retreat to the last entry with a key <= target
     void SeekForPrev(const char* key) {
       Slice user_key = decode_key(key);
-      if (user_key.size() < prefix_.length() + sizeof(uint64_t)) {
+      size_t data_len = user_key.size() - suffix_len_;
+      if (data_len < prefix_.length() + sizeof(uint64_t)) {
         if (user_key.compare(Slice(prefix_)) >= 0) {
           SeekToLast();
         } else {
@@ -397,7 +399,8 @@ class RaftHashList {
       if (cur_bucket_ >= buckets_.size()) {
         return;
       }
-      if (user_key.size() == prefix_.length() + sizeof(uint64_t)) {
+
+      if (data_len == prefix_.length() + sizeof(uint64_t)) {
         if (cur_bucket_ == 0) {
           cur_bucket_ = buckets_.size();
           return;
@@ -451,6 +454,7 @@ class RaftHashList {
    protected:
     const char log_flag_;
     const std::string& prefix_;
+    const size_t suffix_len_;
 
     size_t cur_bucket_;
     std::vector<Bucket*> buckets_;

@@ -102,7 +102,7 @@ TEST_F(RaftMemTableTest, InsertAndLookup) {
       Serialize(region, &log);
       AssertEqual(value, log);
     }
-    RaftHashList::Iterator iter(table);
+    RaftHashList::Iterator iter(table, 0);
     iter.Seek(EncodeKey(MakeKey(prefix, region, 1, start_index + 1)));
     for (int j = 1; j < L; j++) {
       ASSERT_TRUE(iter.Valid());
@@ -127,7 +127,7 @@ TEST_F(RaftMemTableTest, InsertAndLookup) {
   }
   std::sort(datas.begin(), datas.end());
   datas.erase(std::unique(datas.begin(), datas.end()), datas.end());
-  RaftHashList::Iterator iter(table);
+  RaftHashList::Iterator iter(table, 0);
   iter.SeekToFirst();
   for (size_t i = 0; i < datas.size(); i++) {
     ASSERT_TRUE(iter.Valid());

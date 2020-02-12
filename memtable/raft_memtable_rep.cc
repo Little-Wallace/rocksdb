@@ -74,7 +74,7 @@ class RaftMemTableRep : public MemTableRep {
    public:
     // Initialize an iterator over the specified list.
     // The returned iterator is not valid.
-    Iterator(const RaftHashList& table) : iter_(table) {}
+    Iterator(const RaftHashList& table) : iter_(table, sizeof(uint64_t)) {}
 
     ~Iterator() override {}
 
