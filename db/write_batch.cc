@@ -1096,6 +1096,14 @@ Status WriteBatch::Merge(ColumnFamilyHandle* column_family,
                                    value);
 }
 
+Status WriteBatch::Append(const char* data, size_t size) {
+    size_t src_len = size - WriteBatchInternal::kHeader;
+    int src_count = DecodeFixed32(data + 8);
+    WriteBatchInternal::SetCount(this, Count() + src_count);
+    rep_.append(data + WriteBatchInternal::kHeader, src_len);
+    return Status::OK();
+}
+
 Status WriteBatchInternal::PutBlobIndex(WriteBatch* b,
                                         uint32_t column_family_id,
                                         const Slice& key, const Slice& value) {

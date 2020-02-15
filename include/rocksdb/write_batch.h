@@ -139,6 +139,8 @@ class WriteBatch : public WriteBatchBase {
     return Merge(nullptr, key, value);
   }
 
+  Status Append(const char* data, size_t size);
+
   using WriteBatchBase::PutLogData;
   // Append a blob of arbitrary size to the records in this batch. The blob will
   // be stored in the transaction log but not in any other file. In particular,
