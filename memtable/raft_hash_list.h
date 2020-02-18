@@ -335,8 +335,8 @@ class RaftHashList {
     }
 
     // Advance to the first entry with a key >= target
-    void Seek(const char* key) {
-      Slice user_key = decode_key(key);
+    void Seek(const char* raw_key) {
+      Slice user_key = decode_key(raw_key);
       size_t data_len = user_key.size() - suffix_len_;
       if (data_len < prefix_.length() + sizeof(uint64_t)) {
         if (user_key.compare(Slice(prefix_)) <= 0) {
@@ -386,8 +386,8 @@ class RaftHashList {
     }
 
     // Retreat to the last entry with a key <= target
-    void SeekForPrev(const char* key) {
-      Slice user_key = decode_key(key);
+    void SeekForPrev(const char* raw_key) {
+      Slice user_key = decode_key(raw_key);
       size_t data_len = user_key.size() - suffix_len_;
       if (data_len < prefix_.length() + sizeof(uint64_t)) {
         if (user_key.compare(Slice(prefix_)) >= 0) {
