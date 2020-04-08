@@ -1150,6 +1150,50 @@ TEST_F(ExternalSSTFileBasicTest, OverlappingFiles) {
   ASSERT_EQ(2, NumTableFilesAtLevel(0));
 }
 
+TEST_F(ExternalSSTFileBasicTest, IngestTwoSamePrefixKeys) {
+  Options options = CurrentOptions();
+  options.force_consistency_checks = true;
+
+  DestroyAndReopen(options);
+  const size_t kValueSize = 1 << 3;
+  Random rnd(301);
+  std::string value(RandomString(&rnd, kValueSize));
+
+  ExternalSstFileInfo info;
+  std::string f = test::PerThreadDBPath("sst_file_0");
+  EnvOptions env;
+  rocksdb::SstFileWriter writer(env, options);
+  // Write some key to make global seqno larger than zero
+  for (int i = 0; i < 10; i++) {
+    ASSERT_OK(Put("ab" + Key(i), value));
+  }
+  // Get a Snapshot to make RocksDB assign global seqno to ingested sst files.
+  auto snap = dbfull()->GetSnapshot();
+
+  auto s = writer.Open(f);
+  ASSERT_OK(s);
+  std::string key1 = "ab";
+  std::string key2 = "ab";
+
+  // Make the prefix of key2 is same with key1 add zero seqno. The tail of every
+  // key is composed as (seqno << 8 | value_type), and here `1` represents
+  // ValueType::kTypeValue
+  PutFixed64(&key2, 1);
+  key2 += "cdefghijkl";
+
+  ASSERT_OK(writer.Put(key1, value));
+  ASSERT_OK(writer.Put(key2, value));
+
+  ASSERT_OK(writer.Finish(&info));
+  IngestExternalFileOptions ingest_opt;
+  ingest_opt.move_files = true;
+
+  ASSERT_OK(dbfull()->IngestExternalFile({info.file_path}, ingest_opt));
+  dbfull()->ReleaseSnapshot(snap);
+  ASSERT_EQ(value, Get(key1));
+  ASSERT_EQ(value, Get(key2));
+}
+
 INSTANTIATE_TEST_CASE_P(ExternalSSTFileBasicTest, ExternalSSTFileBasicTest,
                         testing::Values(std::make_tuple(true, true),
                                         std::make_tuple(true, false),
